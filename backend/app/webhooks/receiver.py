@@ -14,7 +14,9 @@ Architectural Workflow & Resilience:
 import hashlib
 import json
 import logging
-from fastapi import APIRouter, Request, Header, HTTPException, Depends, BackgroundTasks, status
+from typing import Optional, Dict, Any
+from pydantic import BaseModel, Field
+from fastapi import APIRouter, Request, Header, HTTPException, Depends, BackgroundTasks, Body, status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -30,12 +32,53 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
 
-@router.post("/razorpay", status_code=status.HTTP_200_OK)
+class WebhookResponse(BaseModel):
+    """Pydantic model for Webhook endpoint responses in OpenAPI / Swagger UI documentation."""
+    status: str = Field(..., example="received")
+    razorpay_event_id: str = Field(..., example="evt_demo_101")
+    event_type: str = Field(..., example="payment.failed")
+    record_id: Optional[int] = Field(None, example=1)
+
+
+@router.post(
+    "/razorpay",
+    response_model=WebhookResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Ingest Razorpay Webhook Event",
+    description="Ingests payment.failed and payment.captured webhook events with atomic database idempotency."
+)
 async def receive_razorpay_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
-    x_razorpay_signature: str = Header(None, alias="X-Razorpay-Signature"),
-    x_razorpay_event_id: str = Header(None, alias="X-Razorpay-Event-Id"),
+    payload: Optional[Dict[str, Any]] = Body(
+        None,
+        description="Razorpay JSON webhook payload",
+        openapi_examples={
+            "payment_failed": {
+                "summary": "Payment Failed Event Example",
+                "value": {
+                    "event": "payment.failed",
+                    "event_id": "evt_demo_101",
+                    "payload": {
+                        "payment": {
+                            "entity": {
+                                "id": "pay_demo_101",
+                                "order_id": "ord_demo_101",
+                                "customer_id": "cust_demo_101",
+                                "amount": 499900,
+                                "currency": "INR",
+                                "method": "upi",
+                                "error_reason": "bank_timeout",
+                                "bank": "HDFC"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ),
+    x_razorpay_signature: Optional[str] = Header(None, alias="X-Razorpay-Signature"),
+    x_razorpay_event_id: Optional[str] = Header(None, alias="X-Razorpay-Event-Id"),
     db: Session = Depends(get_db)
 ):
     """
@@ -53,13 +96,14 @@ async def receive_razorpay_webhook(
             )
 
     # Parse payload
-    try:
-        payload = json.loads(raw_body.decode("utf-8"))
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON payload"
-        )
+    if not payload:
+        try:
+            payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON payload"
+            )
 
     # Extract Event ID and Type
     event_type = payload.get("event", "unknown")
@@ -75,11 +119,11 @@ async def receive_razorpay_webhook(
     existing_event = db.query(WebhookEvent).filter(WebhookEvent.razorpay_event_id == event_id).first()
     if existing_event:
         logger.info(f"Duplicate webhook event received and ignored: {event_id}")
-        return {
-            "status": "duplicate_ignored",
-            "razorpay_event_id": event_id,
-            "event_type": event_type
-        }
+        return WebhookResponse(
+            status="duplicate_ignored",
+            razorpay_event_id=event_id,
+            event_type=event_type
+        )
 
     # Persist Webhook Event in PostgreSQL
     webhook_record = WebhookEvent(
@@ -97,18 +141,18 @@ async def receive_razorpay_webhook(
     except IntegrityError:
         db.rollback()
         logger.info(f"Race-condition duplicate event ignored: {event_id}")
-        return {
-            "status": "duplicate_ignored",
-            "razorpay_event_id": event_id,
-            "event_type": event_type
-        }
+        return WebhookResponse(
+            status="duplicate_ignored",
+            razorpay_event_id=event_id,
+            event_type=event_type
+        )
 
-    # Dispatch asynchronous background worker task (without passing request-scoped db session)
+    # Dispatch asynchronous background worker task
     background_tasks.add_task(process_webhook_event, webhook_record.id)
 
-    return {
-        "status": "received",
-        "razorpay_event_id": event_id,
-        "event_type": event_type,
-        "record_id": webhook_record.id
-    }
+    return WebhookResponse(
+        status="received",
+        razorpay_event_id=event_id,
+        event_type=event_type,
+        record_id=webhook_record.id
+    )

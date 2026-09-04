@@ -110,8 +110,14 @@ def record_payment_attempt(
 ) -> PaymentAttempt:
     """
     Records a granular payment attempt linked to a Payment.
+    Aggregates attempt counts across all payments linked to the same order.
     """
-    attempt_count = db.query(PaymentAttempt).filter(PaymentAttempt.payment_id == payment_id).count()
+    payment = db.query(Payment).filter(Payment.id == payment_id).first()
+    if payment and payment.order_id:
+        attempt_count = db.query(PaymentAttempt).join(Payment).filter(Payment.order_id == payment.order_id).count()
+    else:
+        attempt_count = db.query(PaymentAttempt).filter(PaymentAttempt.payment_id == payment_id).count()
+
     attempt = PaymentAttempt(
         payment_id=payment_id,
         attempt_number=attempt_count + 1,

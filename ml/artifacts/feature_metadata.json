@@ -1,0 +1,25 @@
+{
+  "model_version": "recovery-xgb-v1",
+  "algorithm": "HistGradientBoosting",
+  "calibration_method": "isotonic",
+  "empirical_fallbacks": {
+    "AUTH_FAILURE": 0.4261,
+    "BANK_TIMEOUT": 0.6722,
+    "EXPIRED_CARD": 0.0849,
+    "INSUFFICIENT_FUNDS": 0.296
+  },
+  "numerical_features": [
+    "amount",
+    "customer_ltv",
+    "customer_failure_count_30d",
+    "customer_success_count_90d",
+    "attempt_number",
+    "hour",
+    "day_of_week",
+    "subscription"
+  ],
+  "categorical_features": [
+    "payment_method",
+    "failure_reason"
+  ]
+}

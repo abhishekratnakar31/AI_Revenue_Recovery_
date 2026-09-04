@@ -194,10 +194,13 @@ class RecoveryAction(Base):
     expected_recovery = Column(Float, default=0.0)
     expected_cost = Column(Float, default=0.0)
     expected_net_value = Column(Float, default=0.0)
-    status = Column(String(50), default="SCHEDULED")  # SCHEDULED, EXECUTED, FAILED, CANCELLED
+    status = Column(String(50), default="CREATED")  # CREATED, EXECUTING, EXECUTED, FAILED, RETRYABLE, TERMINAL
     scheduled_at = Column(DateTime, default=utc_now)
     executed_at = Column(DateTime, nullable=True)
     outcome = Column(String(50), nullable=True)
+    provider = Column(String(50), nullable=True)  # mock, razorpay
+    provider_transaction_id = Column(String(255), nullable=True)
+    action_metadata = Column(JSON, nullable=True)  # provider_link_id, original_amount, discount_pct, net_amount, etc.
     created_at = Column(DateTime, default=utc_now)
 
     recovery_case = relationship("RecoveryCase", back_populates="actions")
@@ -227,14 +230,20 @@ class AgentDecision(Base):
     Note: Does NOT store hidden chain-of-thought, only structured diagnosis and recommendations.
     """
     __tablename__ = "agent_decisions"
+    __table_args__ = (
+        UniqueConstraint("recovery_case_id", "model_name", name="uq_agent_decision_case_model"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     recovery_case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False)
     selected_action = Column(String(50), nullable=False)
     diagnosis_summary = Column(Text, nullable=True)
     confidence = Column(Float, default=0.0)
+    confidence_score = Column(Float, default=0.0)
     provider = Column(String(50), default="gemini")  # gemini, mock
+    model_name = Column(String(100), default="ENV_Engine_env_v1")
     model_version = Column(String(50), default="v1")
+    reasoning = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now)
 
     recovery_case = relationship("RecoveryCase", back_populates="agent_decisions")
