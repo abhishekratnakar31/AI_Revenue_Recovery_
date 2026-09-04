@@ -40,25 +40,6 @@ async def receive_razorpay_webhook(
 ):
     """
     Receives and ingests incoming Razorpay webhook event payloads.
-    
-    Processing Steps:
-    1. Reads raw HTTP request bytes (`await request.body()`) to preserve payload integrity.
-    2. Validates `X-Razorpay-Signature` against `RAZORPAY_WEBHOOK_SECRET` (bypassed in testing mode).
-    3. Parses JSON payload and extracts event type (e.g. `payment.failed`, `payment.captured`) and unique event ID.
-    4. Computes SHA-256 hash of payload bytes.
-    5. Attempts atomic DB insert into `webhook_events`. If duplicate `x_razorpay_event_id` exists,
-       catches `IntegrityError` and returns `{"status": "duplicate_ignored"}` instantly.
-    6. If event is new, dispatches `process_webhook_event` background task and returns `{"status": "received"}`.
-    
-    Args:
-        request (Request): FastAPI request object for reading raw body.
-        background_tasks (BackgroundTasks): FastAPI task queue for async processing.
-        x_razorpay_signature (str): Razorpay HMAC signature header.
-        x_razorpay_event_id (str): Razorpay unique event ID header.
-        db (Session): Database session dependency.
-        
-    Returns:
-        dict: JSON response object containing status ("received" or "duplicate_ignored") and metadata.
     """
     raw_body = await request.body()
 
@@ -85,7 +66,6 @@ async def receive_razorpay_webhook(
     event_id = x_razorpay_event_id or payload.get("event_id")
 
     if not event_id:
-        # Fallback to deterministic payload hash if header event ID is missing
         payload_hash = hashlib.sha256(raw_body).hexdigest()
         event_id = f"evt_{payload_hash[:16]}"
     else:
@@ -115,7 +95,6 @@ async def receive_razorpay_webhook(
         db.commit()
         db.refresh(webhook_record)
     except IntegrityError:
-        # Catch race condition duplicates occurring between check and insert
         db.rollback()
         logger.info(f"Race-condition duplicate event ignored: {event_id}")
         return {
@@ -124,8 +103,8 @@ async def receive_razorpay_webhook(
             "event_type": event_type
         }
 
-    # Dispatch asynchronous background worker task
-    background_tasks.add_task(process_webhook_event, webhook_record.id, db)
+    # Dispatch asynchronous background worker task (without passing request-scoped db session)
+    background_tasks.add_task(process_webhook_event, webhook_record.id)
 
     return {
         "status": "received",

@@ -5,13 +5,17 @@ This module defines background worker functions that process persisted webhook e
 
 Workflow:
 1. Receives `event_id` (primary key of `webhook_events` record).
-2. Looks up the stored event payload and event type.
-3. Routes the payload to the corresponding specialized handler (`_handle_payment_failed`, `_handle_payment_captured`, etc.).
-4. Updates `processing_status` in the `webhook_events` table to `PROCESSED` (or `FAILED` if an exception occurs).
+2. Manages its own database session lifecycle (SessionLocal) independently of HTTP request lifecycles.
+3. Looks up the stored event payload and event type.
+4. Routes the payload to the corresponding specialized handler (_handle_payment_failed, _handle_payment_captured, etc.).
+5. Updates `processing_status` in the `webhook_events` table to `PROCESSED` (or `FAILED` if an exception occurs).
 """
 
 import logging
+from typing import Optional
 from sqlalchemy.orm import Session
+
+from backend.app.core.database import SessionLocal
 from backend.app.models.models import WebhookEvent
 from backend.app.recovery.case_manager import (
     process_failed_payment_event,
@@ -21,24 +25,31 @@ from backend.app.recovery.case_manager import (
 logger = logging.getLogger(__name__)
 
 
-def process_webhook_event(event_id: int, db: Session):
+def process_webhook_event(event_id: int, db: Optional[Session] = None):
     """
     Asynchronous worker task that executes processing routines for a persisted webhook event.
     
     Args:
         event_id (int): Primary key ID of the `WebhookEvent` database record.
-        db (Session): Database session instance.
+        db (Optional[Session]): Optional database session instance. If None, creates a fresh SessionLocal session.
         
     Behavior:
+        - Manages its own independent session lifecycle to prevent closed-session bugs in FastAPI background tasks.
         - Updates processing_status to 'PROCESSED' on success.
         - Updates processing_status to 'FAILED' on unhandled exceptions.
     """
-    webhook_record = db.query(WebhookEvent).filter(WebhookEvent.id == event_id).first()
-    if not webhook_record:
-        logger.error(f"Webhook record {event_id} not found in database.")
-        return
+    # Create an independent session if none provided (e.g. when called from BackgroundTasks)
+    close_session_on_exit = False
+    if db is None:
+        db = SessionLocal()
+        close_session_on_exit = True
 
     try:
+        webhook_record = db.query(WebhookEvent).filter(WebhookEvent.id == event_id).first()
+        if not webhook_record:
+            logger.error(f"Webhook record {event_id} not found in database.")
+            return
+
         event_type = webhook_record.event_type
         payload = webhook_record.payload
 
@@ -62,8 +73,12 @@ def process_webhook_event(event_id: int, db: Session):
 
     except Exception as e:
         logger.exception(f"Error processing webhook event ID {event_id}: {str(e)}")
-        webhook_record.processing_status = "FAILED"
-        db.commit()
+        if webhook_record:
+            webhook_record.processing_status = "FAILED"
+            db.commit()
+    finally:
+        if close_session_on_exit and db:
+            db.close()
 
 
 def _handle_payment_failed(payload: dict, db: Session):

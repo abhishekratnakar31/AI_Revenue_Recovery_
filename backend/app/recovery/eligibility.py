@@ -25,9 +25,21 @@ from backend.app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-def utc_now():
+def utc_now() -> datetime.datetime:
     """Returns timezone-aware UTC datetime."""
     return datetime.datetime.now(datetime.timezone.utc)
+
+
+def ensure_utc(dt: datetime.datetime) -> datetime.datetime:
+    """
+    Ensures a datetime object is timezone-aware UTC.
+    Converts naive datetimes (common in SQLite test mode) to UTC aware datetimes.
+    """
+    if dt is None:
+        return utc_now()
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
 
 
 @dataclass
@@ -52,13 +64,6 @@ PERMANENT_FAILURE_REASONS = {
 def evaluate_eligibility(db: Session, case_id: int) -> EligibilityResult:
     """
     Evaluates whether a RecoveryCase is eligible to enter active recovery pipelines.
-
-    Args:
-        db (Session): SQLAlchemy database session.
-        case_id (int): Primary key ID of RecoveryCase.
-
-    Returns:
-        EligibilityResult: Object containing is_eligible boolean, current status, and reasoning.
     """
     case = db.query(RecoveryCase).filter(RecoveryCase.id == case_id).first()
     if not case:
@@ -86,7 +91,9 @@ def evaluate_eligibility(db: Session, case_id: int) -> EligibilityResult:
         )
 
     # 3. Case Expiration Check (Attribution Window Exceeded)
-    case_age_hours = (utc_now() - case.created_at.replace(tzinfo=datetime.timezone.utc)).total_seconds() / 3600.0
+    case_created_at = ensure_utc(case.created_at)
+    case_age_hours = (utc_now() - case_created_at).total_seconds() / 3600.0
+
     if case_age_hours > case.attribution_window:
         _update_case_status(db, case, PaymentStatus.EXPIRED.value, f"Case age ({case_age_hours:.1f}h) exceeded attribution window ({case.attribution_window}h).")
         return EligibilityResult(

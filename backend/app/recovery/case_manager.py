@@ -7,10 +7,11 @@ and late-capture resolution for payment failures.
 Core Business Responsibilities:
 1. Entity Lookup/Creation: Manages Customer, Order, Payment, and PaymentAttempt records.
 2. Attempt Aggregation: Multiple failed payment attempts for the same order are aggregated under a SINGLE RecoveryCase.
-3. Verification Buffer: Failed payments initialize cases in PENDING_VERIFICATION state.
-4. Late-Capture Auto-Resolution: If payment.captured arrives while a case is in PENDING_VERIFICATION or RECOVERY_ELIGIBLE,
+3. Customer Profile Updates: Accumulates failed/successful payment counters and Lifetime Value (CLV).
+4. Verification Buffer: Failed payments initialize cases in PENDING_VERIFICATION state.
+5. Late-Capture Auto-Resolution: If payment.captured arrives while a case is in PENDING_VERIFICATION or RECOVERY_ELIGIBLE,
    automatically transitions the case to AUTO_RESOLVED or RECOVERED and creates an Outcome record (NATURAL_RECOVERY or DIRECT).
-5. Buffer Expiration Scanner: `verify_pending_cases_buffer` transitions cases stuck in PENDING_VERIFICATION
+6. Buffer Expiration Scanner: `verify_pending_cases_buffer` transitions cases stuck in PENDING_VERIFICATION
    past the buffer timeout (e.g. 5 mins) to RECOVERY_ELIGIBLE.
 """
 
@@ -27,29 +28,36 @@ from backend.app.state_machine.payment_state import PaymentStateMachine, Payment
 logger = logging.getLogger(__name__)
 
 
-def utc_now():
+def utc_now() -> datetime.datetime:
     """Returns the current timezone-aware UTC datetime."""
     return datetime.datetime.now(datetime.timezone.utc)
+
+
+def ensure_utc(dt: datetime.datetime) -> datetime.datetime:
+    """
+    Ensures a datetime object is timezone-aware UTC.
+    Converts naive datetimes (common in SQLite test mode) to UTC aware datetimes.
+    """
+    if dt is None:
+        return utc_now()
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
 
 
 def get_or_create_customer(db: Session, external_id: str, email: str = None) -> Customer:
     """
     Fetches an existing customer profile by external_customer_id, or creates a new one.
-
-    Args:
-        db (Session): SQLAlchemy database session.
-        external_id (str): Customer identifier string (e.g. cust_123 or email).
-        email (str, optional): Customer email address.
-
-    Returns:
-        Customer: Database customer model instance.
     """
     customer = db.query(Customer).filter(Customer.external_customer_id == external_id).first()
     if not customer:
         customer = Customer(
             external_customer_id=external_id,
             customer_segment="standard",
-            communication_consent=True
+            communication_consent=True,
+            successful_payment_count=0,
+            failed_payment_count=0,
+            lifetime_value=0.0
         )
         db.add(customer)
         db.commit()
@@ -60,15 +68,6 @@ def get_or_create_customer(db: Session, external_id: str, email: str = None) -> 
 def get_or_create_order(db: Session, order_id_str: str, customer_id: int, amount: float) -> Order:
     """
     Fetches an existing order record by razorpay_order_id, or creates a new one.
-
-    Args:
-        db (Session): SQLAlchemy database session.
-        order_id_str (str): Razorpay order ID.
-        customer_id (int): Primary key ID of the linked Customer.
-        amount (float): Order amount in INR.
-
-    Returns:
-        Order: Database order model instance.
     """
     order = db.query(Order).filter(Order.razorpay_order_id == order_id_str).first()
     if not order:
@@ -87,17 +86,6 @@ def get_or_create_order(db: Session, order_id_str: str, customer_id: int, amount
 def get_or_create_payment(db: Session, payment_id_str: str, order_id: int, amount: float, method: str, status: str) -> Payment:
     """
     Fetches or creates a Payment record and updates its current status.
-
-    Args:
-        db (Session): SQLAlchemy database session.
-        payment_id_str (str): Razorpay payment ID.
-        order_id (int): Foreign key ID of linked Order.
-        amount (float): Payment amount in INR.
-        method (str): Payment method (card, upi, netbanking).
-        status (str): Current payment status (failed, captured).
-
-    Returns:
-        Payment: Database payment model instance.
     """
     payment = db.query(Payment).filter(Payment.razorpay_payment_id == payment_id_str).first()
     if not payment:
@@ -122,19 +110,6 @@ def record_payment_attempt(
 ) -> PaymentAttempt:
     """
     Records a granular payment attempt linked to a Payment.
-    Automatically increments the `attempt_number` counter.
-
-    Args:
-        db (Session): Database session.
-        payment_id (int): Foreign key ID of Payment.
-        status (str): Attempt status (failed, captured).
-        failure_reason (str, optional): Gateway/bank error code or description.
-        gateway (str, optional): Gateway identifier.
-        bank (str, optional): Issuing bank name.
-        method (str, optional): Payment method used.
-
-    Returns:
-        PaymentAttempt: Created payment attempt database record.
     """
     attempt_count = db.query(PaymentAttempt).filter(PaymentAttempt.payment_id == payment_id).count()
     attempt = PaymentAttempt(
@@ -157,17 +132,10 @@ def process_failed_payment_event(db: Session, payload: Dict[str, Any]) -> Recove
     Processes a `payment.failed` webhook payload.
 
     Workflow:
-    1. Parses customer, order, payment, and attempt data from payload.
-    2. Aggregates multiple failed attempts under a SINGLE RecoveryCase per order/payment.
-    3. Initializes RecoveryCase in PENDING_VERIFICATION status.
-    4. Records an AuditLog entry.
-
-    Args:
-        db (Session): SQLAlchemy database session.
-        payload (dict): Webhook event payload dictionary.
-
-    Returns:
-        RecoveryCase: Created or updated RecoveryCase model instance.
+    1. Parses customer, order, payment, and attempt data.
+    2. Increments customer.failed_payment_count.
+    3. Aggregates multiple failed attempts under a SINGLE RecoveryCase per order/payment.
+    4. Initializes RecoveryCase in PENDING_VERIFICATION status.
     """
     payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
     payment_id_str = payment_entity.get("id", "pay_unknown")
@@ -184,6 +152,10 @@ def process_failed_payment_event(db: Session, payload: Dict[str, Any]) -> Recove
     order = get_or_create_order(db, order_id_str, customer.id, amount)
     payment = get_or_create_payment(db, payment_id_str, order.id, amount, method, "failed")
     attempt = record_payment_attempt(db, payment.id, "failed", error_reason, gateway, bank, method)
+
+    # Dynamic Customer Profile Metrics Update
+    customer.failed_payment_count = (customer.failed_payment_count or 0) + 1
+    db.commit()
 
     # Aggregation: Check if a RecoveryCase already exists for this order or payment
     case = db.query(RecoveryCase).filter(
@@ -226,21 +198,11 @@ def process_captured_payment_event(db: Session, payload: Dict[str, Any]) -> Opti
     """
     Processes a `payment.captured` or `payment.authorized` webhook payload.
 
-    Handles Late Capture & Customer Self-Retries:
+    Workflow:
     1. Updates Payment status to 'captured' and Order status to 'paid'.
-    2. Finds matching RecoveryCase.
-    3. If case is in PENDING_VERIFICATION (late capture before action):
-       Transitions state to AUTO_RESOLVED and sets attribution to NATURAL_RECOVERY.
-    4. If case is in RECOVERY_ELIGIBLE or RECOVERY_ACTIVE (captured after recovery action):
-       Transitions state to RECOVERED and sets attribution to DIRECT.
-    5. Persists gross/net revenue in the Outcome table.
-
-    Args:
-        db (Session): SQLAlchemy database session.
-        payload (dict): Webhook event payload dictionary.
-
-    Returns:
-        Optional[RecoveryCase]: Updated RecoveryCase instance, or None if no matching case exists.
+    2. Increments customer.successful_payment_count and updates customer.lifetime_value (CLV).
+    3. Finds matching RecoveryCase and performs validated state transition.
+    4. Persists gross/net revenue in the Outcome table.
     """
     payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
     payment_id_str = payment_entity.get("id")
@@ -259,6 +221,13 @@ def process_captured_payment_event(db: Session, payload: Dict[str, Any]) -> Opti
     if order:
         order.status = "paid"
         db.commit()
+
+        # Update customer LTV and success count
+        customer = db.query(Customer).filter(Customer.id == order.customer_id).first()
+        if customer:
+            customer.successful_payment_count = (customer.successful_payment_count or 0) + 1
+            customer.lifetime_value = (customer.lifetime_value or 0.0) + amount
+            db.commit()
 
     # Find matching RecoveryCase
     case = None
@@ -335,39 +304,33 @@ def verify_pending_cases_buffer(db: Session, max_age_seconds: int = 300) -> int:
     Scans cases stuck in PENDING_VERIFICATION.
     If the buffer window (max_age_seconds) has elapsed without receiving a late payment.captured,
     automatically transitions the case status to RECOVERY_ELIGIBLE.
-
-    Args:
-        db (Session): SQLAlchemy database session.
-        max_age_seconds (int): Maximum seconds a case stays in PENDING_VERIFICATION. Default is 300 (5 mins).
-
-    Returns:
-        int: Total number of cases transitioned to RECOVERY_ELIGIBLE.
     """
     cutoff = utc_now() - datetime.timedelta(seconds=max_age_seconds)
     pending_cases = db.query(RecoveryCase).filter(
-        RecoveryCase.status == PaymentStatus.PENDING_VERIFICATION.value,
-        RecoveryCase.created_at <= cutoff
+        RecoveryCase.status == PaymentStatus.PENDING_VERIFICATION.value
     ).all()
 
     transitioned_count = 0
     for case in pending_cases:
-        try:
-            new_status = PaymentStateMachine.transition(case.status, PaymentStatus.RECOVERY_ELIGIBLE.value)
-            case.status = new_status
-            db.commit()
+        case_created_at = ensure_utc(case.created_at)
+        if case_created_at <= cutoff:
+            try:
+                new_status = PaymentStateMachine.transition(case.status, PaymentStatus.RECOVERY_ELIGIBLE.value)
+                case.status = new_status
+                db.commit()
 
-            audit = AuditLog(
-                case_id=case.id,
-                actor="system",
-                event="VERIFICATION_BUFFER_EXPIRED",
-                previous_state=PaymentStatus.PENDING_VERIFICATION.value,
-                new_state=PaymentStatus.RECOVERY_ELIGIBLE.value,
-                reason="Verification buffer window elapsed without late capture."
-            )
-            db.add(audit)
-            db.commit()
-            transitioned_count += 1
-        except InvalidStateTransitionError as e:
-            logger.error(f"Error transitioning case #{case.id}: {str(e)}")
+                audit = AuditLog(
+                    case_id=case.id,
+                    actor="system",
+                    event="VERIFICATION_BUFFER_EXPIRED",
+                    previous_state=PaymentStatus.PENDING_VERIFICATION.value,
+                    new_state=PaymentStatus.RECOVERY_ELIGIBLE.value,
+                    reason="Verification buffer window elapsed without late capture."
+                )
+                db.add(audit)
+                db.commit()
+                transitioned_count += 1
+            except InvalidStateTransitionError as e:
+                logger.error(f"Error transitioning case #{case.id}: {str(e)}")
 
     return transitioned_count
