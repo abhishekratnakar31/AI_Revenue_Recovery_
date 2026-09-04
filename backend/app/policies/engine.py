@@ -18,7 +18,8 @@ from backend.app.policies.rules import (
     check_max_retries_rule,
     check_retry_interval_rule,
     check_customer_fatigue_rule,
-    check_discount_cap_rule
+    check_discount_cap_rule,
+    check_gateway_degradation_rule,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,12 @@ def evaluate_policy(db: Session, case_id: int, action_type: str, proposed_discou
         if not passed:
             _record_policy_decision(db, case.id, action_type, "BLOCK", reason)
             return PolicyResult(decision="BLOCK", reason=reason)
+
+        # 3. Gateway Route Degradation Check (Milestone 11)
+        passed, reason, decision_code = check_gateway_degradation_rule(db, case)
+        if not passed:
+            _record_policy_decision(db, case.id, action_type, "BLOCK", f"DEGRADED_ROUTE_PAUSED: {reason}")
+            return PolicyResult(decision="BLOCK", reason=f"DEGRADED_ROUTE_PAUSED: {reason}")
 
     if action_type in ("EMAIL_REMINDER", "PAYMENT_LINK", "SMS_REMINDER", "NOTIFICATION"):
         # 3. Customer Fatigue Check

@@ -80,3 +80,56 @@ def check_discount_cap_rule(proposed_discount: float, merchant_policy: MerchantP
     if proposed_discount > max_discount:
         return False, f"Proposed discount {proposed_discount:.1f}% exceeds merchant cap of {max_discount:.1f}%."
     return True, f"Proposed discount {proposed_discount:.1f}% is within cap ({max_discount:.1f}%)."
+
+
+def check_gateway_degradation_rule(db: Session, case: RecoveryCase) -> Tuple[bool, str, str]:
+    """
+    Evaluates proposed RETRY action against statistical route degradation status (Milestone 11).
+    Returns (passed, reason, decision_code).
+    """
+    from backend.app.models.models import Payment, PaymentAttempt, GatewayRouteStatus
+    from backend.app.analytics.degradation import normalize_route, utc_now
+
+    # Fetch last payment attempt or payment metadata
+    attempt = None
+    if case.payment_id:
+        attempt = db.query(PaymentAttempt).filter(
+            PaymentAttempt.payment_id == case.payment_id
+        ).order_by(PaymentAttempt.timestamp.desc()).first()
+
+    payment = db.query(Payment).filter(Payment.id == case.payment_id).first() if case.payment_id else None
+
+    gw = getattr(attempt, "gateway", None) or getattr(payment, "gateway", "razorpay")
+    pm = getattr(attempt, "payment_method", None) or getattr(payment, "payment_method", "CARD")
+    b = getattr(attempt, "bank", None) or "UNKNOWN"
+
+    gw_norm, pm_norm, b_norm = normalize_route(gw, pm, b)
+
+    route_status = db.query(GatewayRouteStatus).filter(
+        GatewayRouteStatus.gateway == gw_norm,
+        GatewayRouteStatus.payment_method == pm_norm,
+        GatewayRouteStatus.bank == b_norm,
+    ).first()
+
+    if not route_status or route_status.status == "NORMAL":
+        return True, f"Route ({gw_norm}, {pm_norm}, {b_norm}) is operating normally.", "ALLOW"
+
+    if route_status.status == "SUSPECTED":
+        return True, f"Route ({gw_norm}, {pm_norm}, {b_norm}) is SUSPECTED degraded (Z={route_status.current_z_score:.2f}). Retry allowed under observation.", "ALLOW"
+
+    if route_status.status == "CONFIRMED":
+        return False, f"Route ({gw_norm}, {pm_norm}, {b_norm}) is experiencing CONFIRMED degradation (Z={route_status.current_z_score:.2f}). Direct retries paused.", "BLOCK"
+
+    if route_status.status == "RECOVERING":
+        now = utc_now()
+        last_probe = route_status.last_probe_at
+        if last_probe:
+            last_p_time = last_probe.replace(tzinfo=datetime.timezone.utc) if last_probe.tzinfo is None else last_probe
+            elapsed_sec = (now - last_p_time).total_seconds()
+            if elapsed_sec < 300:
+                return False, f"Route ({gw_norm}, {pm_norm}, {b_norm}) recovering; probe slot used {elapsed_sec:.0f}s ago (required: 300s).", "BLOCK"
+
+        return True, f"Route ({gw_norm}, {pm_norm}, {b_norm}) recovering; probe slot granted.", "ALLOW_PROBE"
+
+    return True, f"Route operating normally.", "ALLOW"
+

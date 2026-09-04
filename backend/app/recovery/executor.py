@@ -268,6 +268,23 @@ class ActionExecutor:
             metadata={"case_id": case.id, "decision_id": agent_decision.id},
         )
 
+        # Update last_probe_at on GatewayRouteStatus if route status exists
+        from backend.app.models.models import GatewayRouteStatus, PaymentAttempt
+        from backend.app.analytics.degradation import normalize_route
+        attempt = db.query(PaymentAttempt).filter(PaymentAttempt.payment_id == case.payment_id).order_by(PaymentAttempt.timestamp.desc()).first() if case.payment_id else None
+        payment = case.payment
+        gw = getattr(attempt, "gateway", None) or getattr(payment, "gateway", "razorpay")
+        pm = getattr(attempt, "payment_method", None) or getattr(payment, "payment_method", "CARD")
+        b = getattr(attempt, "bank", None) or "UNKNOWN"
+        gw_n, pm_n, b_n = normalize_route(gw, pm, b)
+        route_st = db.query(GatewayRouteStatus).filter(
+            GatewayRouteStatus.gateway == gw_n,
+            GatewayRouteStatus.payment_method == pm_n,
+            GatewayRouteStatus.bank == b_n,
+        ).first()
+        if route_st:
+            route_st.last_probe_at = datetime.now(timezone.utc)
+
         action.executed_at = datetime.now(timezone.utc)
         action.provider_transaction_id = resp.transaction_id
 

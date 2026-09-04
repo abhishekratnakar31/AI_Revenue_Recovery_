@@ -46,6 +46,10 @@ class Customer(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     external_customer_id = Column(String(255), unique=True, index=True, nullable=False)
+    first_name = Column(String(100), nullable=True, default="Valued Customer")
+    last_name = Column(String(100), nullable=True)
+    email = Column(String(255), nullable=True)
+    phone = Column(String(50), nullable=True)
     customer_segment = Column(String(100), default="standard")  # e.g., standard, vip, high_value
     lifetime_value = Column(Float, default=0.0)
     successful_payment_count = Column(Integer, default=0)
@@ -287,14 +291,21 @@ class WebhookEvent(Base):
 class NotificationEvent(Base):
     """
     Audit log of customer notifications dispatched across channels (Email, SMS, WhatsApp).
+    Enforces database-level UNIQUE(idempotency_key) to prevent double delivery.
     """
     __tablename__ = "notification_events"
 
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     recovery_case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False)
+    recovery_action_id = Column(Integer, ForeignKey("recovery_actions.id"), nullable=True)
     channel = Column(String(50), nullable=False)  # email, sms, whatsapp
     notification_type = Column(String(50), nullable=False)
+    idempotency_key = Column(String(255), unique=True, index=True, nullable=True)
+    headline = Column(String(255), nullable=True)
+    message_body = Column(Text, nullable=True)
+    cta_text = Column(String(255), nullable=True)
+    status_metadata = Column(JSON, nullable=True)
     timestamp = Column(DateTime, default=utc_now)
     delivery_status = Column(String(50), default="SENT")
 
@@ -370,17 +381,44 @@ class Outcome(Base):
 
 class MerchantPolicy(Base):
     """
-    Configurable merchant policy guardrails.
-    Determines maximum retries, retry intervals, approval thresholds, and degradation pause rules.
+    Merchant-level configurable policy constraints.
+    Controls retry rules, approval thresholds, fatigue limits, and max discount percentages.
     """
     __tablename__ = "merchant_policies"
 
     id = Column(Integer, primary_key=True, index=True)
+    merchant_id = Column(Integer, nullable=True)
     max_retries = Column(Integer, default=2)
-    minimum_retry_interval = Column(Integer, default=30)  # in minutes
+    minimum_retry_interval = Column(Integer, default=30)  # minutes
     max_notifications_per_24h = Column(Integer, default=2)
-    manual_approval_threshold = Column(Float, default=25000.0)  # INR threshold requiring manual approval
     max_discount_percentage = Column(Float, default=10.0)
-    degradation_pause_enabled = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=utc_now)
+    manual_approval_threshold = Column(Float, default=25000.0)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class GatewayRouteStatus(Base):
+    """
+    Stores 3-tuple route degradation status and rolling statistical failure metrics.
+    Enforces UNIQUE(gateway, payment_method, bank) to track route health across payment channels.
+    """
+    __tablename__ = "gateway_route_statuses"
+    __table_args__ = (
+        UniqueConstraint("gateway", "payment_method", "bank", name="uq_gateway_route_status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    gateway = Column(String(50), nullable=False)
+    payment_method = Column(String(50), nullable=False)
+    bank = Column(String(100), default="UNKNOWN")
+    status = Column(String(50), default="NORMAL")  # NORMAL, SUSPECTED, CONFIRMED, RECOVERING
+    current_failure_rate = Column(Float, default=0.0)
+    current_z_score = Column(Float, default=0.0)
+    total_attempts = Column(Integer, default=0)
+    failed_attempts = Column(Integer, default=0)
+    baseline_failure_rate = Column(Float, default=0.05)
+    window_start = Column(DateTime, nullable=True)
+    window_end = Column(DateTime, nullable=True)
+    last_evaluated_at = Column(DateTime, default=utc_now)
+    last_probe_at = Column(DateTime, nullable=True)
+    last_state_change = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
