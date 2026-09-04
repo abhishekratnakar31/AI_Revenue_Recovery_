@@ -358,6 +358,14 @@ class ExperimentAssignment(Base):
     group = Column(String(50), nullable=False)  # CONTROL, TREATMENT, NO_INTERVENTION
     assigned_at = Column(DateTime, default=utc_now)
 
+    @property
+    def recovery_case_id(self):
+        return self.case_id
+
+    @property
+    def assignment_group(self):
+        return self.group
+
 
 class Outcome(Base):
     """
@@ -368,15 +376,25 @@ class Outcome(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     case_id = Column(Integer, ForeignKey("recovery_cases.id"), unique=True, nullable=False)
-    intervention = Column(String(50), nullable=False)  # Retry, Payment Link, Natural Capture, etc.
+    intervention = Column(String(50), nullable=True)  # Retry, Payment Link, Natural Capture, etc.
     payment_success = Column(Boolean, default=False)
+    is_recovered = Column(Boolean, default=False)
     gross_recovered = Column(Float, default=0.0)
     refund_amount = Column(Float, default=0.0)
+    refund_deductions = Column(Float, default=0.0)
+    gateway_cost = Column(Float, default=0.0)
+    communication_cost = Column(Float, default=0.0)
+    discount_given = Column(Float, default=0.0)
     net_recovered = Column(Float, default=0.0)
     attribution_status = Column(String(50), default="UNKNOWN")  # DIRECT, NATURAL_RECOVERY, UNKNOWN
     recovery_timestamp = Column(DateTime, nullable=True)
 
     recovery_case = relationship("RecoveryCase", back_populates="outcome")
+
+    @property
+    def recovery_case_id(self):
+        return self.case_id
+
 
 
 class MerchantPolicy(Base):
@@ -422,3 +440,25 @@ class GatewayRouteStatus(Base):
     last_probe_at = Column(DateTime, nullable=True)
     last_state_change = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class RefundEvent(Base):
+    """
+    Stores processed refund events from webhook ingestion.
+    Enforces UNIQUE(razorpay_refund_id) for atomic refund idempotency.
+    """
+    __tablename__ = "refund_events"
+    __table_args__ = (
+        UniqueConstraint("razorpay_refund_id", name="uq_refund_event_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    razorpay_refund_id = Column(String(100), nullable=False, unique=True, index=True)
+    payment_id = Column(Integer, ForeignKey("payments.id"), nullable=False)
+    recovery_case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=True)
+    amount = Column(Float, nullable=False)
+    processed_at = Column(DateTime, default=utc_now)
+
+    payment = relationship("Payment")
+    recovery_case = relationship("RecoveryCase")
+

@@ -108,5 +108,49 @@ def _handle_subscription_pending(payload: dict, db: Session):
 
 
 def _handle_refund_created(payload: dict, db: Session):
-    """Placeholder handler for refund/dispute creation events."""
-    logger.info("Handled refund.created event payload")
+    """
+    Handles `refund.created` webhook payload.
+    Extracts razorpay_refund_id, payment_id, amount and delegates to AttributionEngine.process_refund_deduction().
+    """
+    from backend.app.analytics.attribution import AttributionEngine
+    from backend.app.models.models import Payment
+
+    refund_entity = payload.get("payload", {}).get("refund", {}).get("entity", {}) if "payload" in payload else payload.get("entity", payload)
+
+    razorpay_refund_id = refund_entity.get("id") or payload.get("razorpay_refund_id") or payload.get("id")
+    payment_id_str = refund_entity.get("payment_id") or payload.get("payment_id")
+    amount_raw = refund_entity.get("amount", 0) or payload.get("amount", 0)
+
+    # Razorpay amounts in webhooks are typically in paise (e.g. 50000 paise = 500 INR)
+    if isinstance(amount_raw, int) and amount_raw >= 100 and ("notes" in refund_entity or "entity" in payload):
+        refund_amount = amount_raw / 100.0
+    else:
+        refund_amount = float(amount_raw)
+
+    if not razorpay_refund_id:
+        logger.warning("refund.created payload missing razorpay_refund_id.")
+        return
+
+    # Resolve internal Payment ID
+    payment_db_id = None
+    if isinstance(payment_id_str, int):
+        payment_db_id = payment_id_str
+    elif isinstance(payment_id_str, str):
+        p = db.query(Payment).filter(Payment.razorpay_payment_id == payment_id_str).first()
+        if p:
+            payment_db_id = p.id
+        elif payment_id_str.isdigit():
+            payment_db_id = int(payment_id_str)
+
+    if not payment_db_id:
+        logger.warning(f"Could not resolve internal payment ID for refund '{razorpay_refund_id}' (payment_id: {payment_id_str})")
+        return
+
+    res = AttributionEngine.process_refund_deduction(
+        db=db,
+        razorpay_refund_id=razorpay_refund_id,
+        payment_id=payment_db_id,
+        refund_amount=refund_amount,
+    )
+    logger.info(f"Handled refund.created event '{razorpay_refund_id}' -> {res}")
+
