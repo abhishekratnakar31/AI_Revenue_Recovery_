@@ -14,25 +14,21 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# Set test environment
-os.environ["USE_TEST_DB"] = "1"
-os.environ["TEST_DATABASE_URL"] = "sqlite:///./test.db"
-
+from sqlalchemy.pool import StaticPool
 from backend.app.core.database import Base
 from backend.app.models.models import Customer, RecoveryCase, Experiment, ExperimentAssignment, Outcome
 from backend.app.experiments.baselines import get_baseline_action, BASELINE_STRATEGIES
 from backend.app.experiments.assigner import assign_case_to_experiment
 from backend.app.experiments.registry import get_or_create_experiment, get_experiment_metrics
 
-engine = create_engine("sqlite:///./test.db", connect_args={"check_same_thread": False})
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+ab_engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=ab_engine)
 
 
 @pytest.fixture(autouse=True)
 def setup_db():
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=ab_engine)
     yield
-    Base.metadata.drop_all(bind=engine)
 
 
 def test_baseline_strategies_definition():

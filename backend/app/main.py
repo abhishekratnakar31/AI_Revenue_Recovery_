@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from backend.app.core.config import settings
-from backend.app.core.database import get_db
+from backend.app.core.database import get_db, engine, Base
 from backend.app.models.models import RecoveryCase, Customer, Order, Payment, Outcome, PolicyDecision, AuditLog
 from backend.app.webhooks.receiver import router as webhook_router
 from backend.app.recovery.eligibility import evaluate_eligibility
@@ -24,6 +24,12 @@ from backend.app.policies.engine import evaluate_policy
 from backend.app.experiments.registry import get_or_create_experiment, get_experiment_metrics
 from simulation.runner import run_simulation_batch
 
+from fastapi.middleware.cors import CORSMiddleware
+from backend.app.api.v1.router import api_v1_router
+
+# Create database tables if they do not exist
+Base.metadata.create_all(bind=engine)
+
 # Initialize FastAPI Application
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -31,8 +37,18 @@ app = FastAPI(
     description="AI-powered revenue recovery and payment intelligence platform"
 )
 
-# Register Webhook Router
+# Configure CORS Middleware for Next.js Dashboard Frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register Webhook Router & Canonical API v1 Router
 app.include_router(webhook_router)
+app.include_router(api_v1_router, prefix="/api/v1")
 
 
 @app.get("/", tags=["Operational"])

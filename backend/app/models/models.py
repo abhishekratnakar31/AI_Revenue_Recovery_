@@ -323,8 +323,8 @@ class AuditLog(Base):
     case_id = Column(Integer, nullable=True, index=True)
     actor = Column(String(100), default="system")  # system, merchant, agent
     event = Column(String(100), nullable=False)
-    previous_state = Column(String(50), nullable=True)
-    new_state = Column(String(50), nullable=True)
+    previous_state = Column(Text, nullable=True)
+    new_state = Column(Text, nullable=True)
     reason = Column(Text, nullable=True)
     model_version = Column(String(50), nullable=True)
     policy_version = Column(String(50), nullable=True)
@@ -411,6 +411,7 @@ class MerchantPolicy(Base):
     max_notifications_per_24h = Column(Integer, default=2)
     max_discount_percentage = Column(Float, default=10.0)
     manual_approval_threshold = Column(Float, default=25000.0)
+    version = Column(Integer, default=1, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 

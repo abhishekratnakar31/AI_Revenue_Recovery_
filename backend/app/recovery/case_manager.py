@@ -60,8 +60,7 @@ def get_or_create_customer(db: Session, external_id: str, email: str = None) -> 
             lifetime_value=0.0
         )
         db.add(customer)
-        db.commit()
-        db.refresh(customer)
+        db.flush()
     return customer
 
 
@@ -78,8 +77,7 @@ def get_or_create_order(db: Session, order_id_str: str, customer_id: int, amount
             status="created"
         )
         db.add(order)
-        db.commit()
-        db.refresh(order)
+        db.flush()
     return order
 
 
@@ -97,11 +95,10 @@ def get_or_create_payment(db: Session, payment_id_str: str, order_id: int, amoun
             status=status
         )
         db.add(payment)
-        db.commit()
-        db.refresh(payment)
+        db.flush()
     else:
         payment.status = status
-        db.commit()
+        db.flush()
     return payment
 
 
@@ -130,6 +127,14 @@ def record_payment_attempt(
     db.add(attempt)
     db.commit()
     db.refresh(attempt)
+
+    # Auto-trigger Gateway Degradation Detector status update
+    try:
+        from backend.app.analytics.degradation import GatewayDegradationDetector
+        GatewayDegradationDetector().record_payment_attempt_event(db, attempt)
+    except Exception as e:
+        logger.warning(f"Degradation detector trigger failed: {e}")
+
     return attempt
 
 
@@ -151,7 +156,10 @@ def process_failed_payment_event(db: Session, payload: Dict[str, Any]) -> Recove
     method = payment_entity.get("method", "card")
     error_reason = payment_entity.get("error_reason") or payment_entity.get("error_description") or "payment_failed"
     bank = payment_entity.get("bank")
-    gateway = payment_entity.get("acquirer_data", {}).get("bank_transaction_id") or "razorpay"
+    # Use canonical gateway name for degradation detection (Finding #4 fix).
+    # bank_transaction_id is unique per payment and would fragment M11 route aggregation.
+    gateway = "razorpay"
+    provider_tx_id = payment_entity.get("acquirer_data", {}).get("bank_transaction_id")
 
     # Entities Creation/Lookup
     customer = get_or_create_customer(db, customer_id_str)

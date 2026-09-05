@@ -37,19 +37,11 @@ def assign_case_to_experiment(
     db: Session,
     case_id: int,
     experiment_name: str = "default_recovery_ab",
-    seed: int = 42
+    seed: int = 42,
+    forced_group: Optional[str] = None,
 ) -> AssignmentResult:
     """
     Assigns a RecoveryCase to an A/B experiment group.
-
-    Args:
-        db (Session): SQLAlchemy database session.
-        case_id (int): Primary key ID of RecoveryCase.
-        experiment_name (str): Unique experiment identifier name. Default "default_recovery_ab".
-        seed (int): Random seed for hashing. Default 42.
-
-    Returns:
-        AssignmentResult: Object containing group assignment ('TREATMENT', 'CONTROL', or 'NO_INTERVENTION').
     """
     experiment = get_or_create_experiment(db, name=experiment_name, seed=seed)
 
@@ -60,6 +52,9 @@ def assign_case_to_experiment(
     ).first()
 
     if existing:
+        if forced_group and existing.group != forced_group:
+            existing.group = forced_group
+            db.commit()
         return AssignmentResult(
             group=existing.group,
             experiment_id=experiment.id,
@@ -67,18 +62,21 @@ def assign_case_to_experiment(
             is_new_assignment=False
         )
 
-    # Compute deterministic float [0.0 - 1.0) using SHA-256
-    hash_input = f"{case_id}_{seed}_{experiment_name}".encode("utf-8")
-    hash_hex = hashlib.sha256(hash_input).hexdigest()
-    hash_val = int(hash_hex[:8], 16) / 0xFFFFFFFF  # Normalized float in [0.0, 1.0)
-
-    # Determine Group Split: Treatment (50%), Control (45%), No-Intervention (5%)
-    if hash_val < 0.50:
-        assigned_group = "TREATMENT"
-    elif hash_val < 0.95:
-        assigned_group = "CONTROL"
+    if forced_group:
+        assigned_group = forced_group
     else:
-        assigned_group = "NO_INTERVENTION"
+        # Compute deterministic float [0.0 - 1.0) using SHA-256
+        hash_input = f"{case_id}_{seed}_{experiment_name}".encode("utf-8")
+        hash_hex = hashlib.sha256(hash_input).hexdigest()
+        hash_val = int(hash_hex[:8], 16) / 0xFFFFFFFF  # Normalized float in [0.0, 1.0)
+
+        # Determine Group Split: Treatment (50%), Control (45%), No-Intervention (5%)
+        if hash_val < 0.50:
+            assigned_group = "TREATMENT"
+        elif hash_val < 0.95:
+            assigned_group = "CONTROL"
+        else:
+            assigned_group = "NO_INTERVENTION"
 
     # Persist assignment in PostgreSQL
     assignment = ExperimentAssignment(

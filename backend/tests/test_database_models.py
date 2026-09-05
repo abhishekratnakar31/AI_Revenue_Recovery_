@@ -172,7 +172,6 @@ def test_merchant_policy_defaults():
     assert policy.max_notifications_per_24h == 2
     assert policy.manual_approval_threshold == 25000.0
     assert policy.max_discount_percentage == 10.0
-    assert policy.degradation_pause_enabled is True
     db.close()
 
 

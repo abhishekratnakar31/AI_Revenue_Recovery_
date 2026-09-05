@@ -34,7 +34,12 @@ class CommunicationSafetyGate:
         ch_upper = channel.upper()
         canonical_url = action_metadata.get("short_url") or action_metadata.get("payment_url") or ""
         expected_amount = str(backend_context.get("amount", ""))
-        expected_discount = str(action_metadata.get("discount_pct", 0))
+        raw_discount = action_metadata.get("discount_pct", 0)
+        try:
+            discount_pct = float(raw_discount) if raw_discount is not None else 0.0
+        except (ValueError, TypeError):
+            discount_pct = 0.0
+        expected_discount = str(discount_pct)
 
         headline = copy.headline.strip()
         body = copy.body.strip()
@@ -84,8 +89,12 @@ class CommunicationSafetyGate:
             logger.warning(f"Safety Gate Rejected LLM Copy: {fallback_reason}. Applying Deterministic Fallback.")
             first_name = backend_context.get("first_name", "Valued Customer")
             amount = backend_context.get("amount", "0.00")
-            currency = backend_context.get("currency", "INR")
-            discount_pct = action_metadata.get("discount_pct", 0)
+            currency = backend_context.get("currency", "₹")
+            raw_discount = action_metadata.get("discount_pct", 0)
+            try:
+                discount_pct = float(raw_discount) if raw_discount is not None else 0.0
+            except (ValueError, TypeError):
+                discount_pct = 0.0
 
             if ch_upper == "SMS":
                 headline = "Payment Notice"

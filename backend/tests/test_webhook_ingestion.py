@@ -34,10 +34,22 @@ engine = create_engine("sqlite:///./test.db", connect_args={"check_same_thread":
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+from backend.app.core.database import get_db
+
 @pytest.fixture(autouse=True)
 def setup_db():
     Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
     yield
+    app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
 
 
@@ -79,13 +91,20 @@ def test_webhook_post_valid_event():
             }
         }
     }
+    body_bytes = json.dumps(payload).encode("utf-8")
+    sig = hmac.new(
+        key=(settings.RAZORPAY_WEBHOOK_SECRET or "merchant_secret_key").encode("utf-8"),
+        msg=body_bytes,
+        digestmod=hashlib.sha256
+    ).hexdigest()
 
     response = client.post(
         "/webhooks/razorpay",
-        json=payload,
+        content=body_bytes,
         headers={
+            "Content-Type": "application/json",
             "X-Razorpay-Event-Id": "evt_test_unique_001",
-            "X-Razorpay-Signature": "dummy_sig"
+            "X-Razorpay-Signature": sig
         }
     )
 
@@ -102,18 +121,26 @@ def test_webhook_atomic_idempotency_duplicate():
         "event": "payment.failed",
         "payload": {"payment": {"entity": {"id": "pay_dup_001", "amount": 1000}}}
     }
+    body_bytes = json.dumps(payload).encode("utf-8")
+    sig = hmac.new(
+        key=(settings.RAZORPAY_WEBHOOK_SECRET or "merchant_secret_key").encode("utf-8"),
+        msg=body_bytes,
+        digestmod=hashlib.sha256
+    ).hexdigest()
+
     headers = {
+        "Content-Type": "application/json",
         "X-Razorpay-Event-Id": "evt_test_duplicate_999",
-        "X-Razorpay-Signature": "dummy_sig"
+        "X-Razorpay-Signature": sig
     }
 
     # 1st Request -> Success
-    res1 = client.post("/webhooks/razorpay", json=payload, headers=headers)
+    res1 = client.post("/webhooks/razorpay", content=body_bytes, headers=headers)
     assert res1.status_code == 200
     assert res1.json()["status"] == "received"
 
     # 2nd Request (Duplicate) -> Atomic Idempotency Ignored
-    res2 = client.post("/webhooks/razorpay", json=payload, headers=headers)
+    res2 = client.post("/webhooks/razorpay", content=body_bytes, headers=headers)
     assert res2.status_code == 200
     assert res2.json()["status"] == "duplicate_ignored"
 

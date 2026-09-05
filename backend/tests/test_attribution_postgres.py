@@ -31,8 +31,12 @@ PG_URL = os.getenv("PG_DATABASE_URL", settings.DATABASE_URL)
 
 
 def is_postgres_available() -> bool:
+    if "sqlite" in str(PG_URL).lower():
+        return False
     try:
         eng = create_engine(PG_URL, connect_args={"connect_timeout": 3})
+        if eng.dialect.name != "postgresql":
+            return False
         with eng.connect() as conn:
             return True
     except Exception:
@@ -55,11 +59,19 @@ def test_postgres_5_thread_concurrent_duplicate_refund_idempotency():
     4. Outcome.refund_deductions is updated EXACTLY ONCE (₹2,500.00, NOT ₹12,500.00)
     """
     pg_engine = create_engine(PG_URL, pool_pre_ping=True)
-    Base.metadata.drop_all(bind=pg_engine)
-    Base.metadata.create_all(bind=pg_engine)
     PGSession = sessionmaker(autocommit=False, autoflush=False, bind=pg_engine)
-
     db = PGSession()
+
+    # Clean up test entities if they exist
+    cust = db.query(Customer).filter(Customer.external_customer_id == "cust_pg_m12_concurrent").first()
+    if cust:
+        db.query(RefundEvent).filter(RefundEvent.razorpay_refund_id == "rfnd_pg_concurrent_999").delete()
+        db.query(Outcome).filter(Outcome.case_id.in_(db.query(RecoveryCase.id).filter(RecoveryCase.customer_id == cust.id))).delete(synchronize_session=False)
+        db.query(RecoveryCase).filter(RecoveryCase.customer_id == cust.id).delete(synchronize_session=False)
+        db.query(Payment).filter(Payment.order_id.in_(db.query(Order.id).filter(Order.customer_id == cust.id))).delete(synchronize_session=False)
+        db.query(Order).filter(Order.customer_id == cust.id).delete(synchronize_session=False)
+        db.query(Customer).filter(Customer.id == cust.id).delete(synchronize_session=False)
+        db.commit()
 
     # Step 1: Pre-populate PostgreSQL with Customer, Order, Payment, RecoveryCase, and Outcome
     cust = Customer(external_customer_id="cust_pg_m12_concurrent", lifetime_value=50000.0)
@@ -101,6 +113,7 @@ def test_postgres_5_thread_concurrent_duplicate_refund_idempotency():
     )
     db.add(outcome)
     db.commit()
+    case_id = case.id
     payment_id = payment.id
     db.close()
 
@@ -140,11 +153,17 @@ def test_postgres_5_thread_concurrent_duplicate_refund_idempotency():
     assert refund_events_count == 1
 
     # Verify Outcome.refund_deductions updated EXACTLY ONCE (₹2,500.00, NOT ₹12,500.00)
-    db_outcome = check_db.query(Outcome).filter(Outcome.case_id == case.id).first()
+    db_outcome = check_db.query(Outcome).filter(Outcome.case_id == case_id).first()
     assert db_outcome.refund_deductions == 2500.0
     assert db_outcome.net_recovered == 7390.0  # 10000 - 2500 - 100 - 10 = 7390
 
-    # Clean up database
-    Base.metadata.drop_all(bind=pg_engine)
+    # Clean up database test records
+    check_db.query(RefundEvent).filter(RefundEvent.razorpay_refund_id == refund_id).delete()
+    check_db.query(Outcome).filter(Outcome.case_id == case_id).delete()
+    check_db.query(RecoveryCase).filter(RecoveryCase.id == case_id).delete()
+    check_db.query(Payment).filter(Payment.id == payment_id).delete()
+    check_db.query(Order).filter(Order.id == order.id).delete()
+    check_db.query(Customer).filter(Customer.id == cust.id).delete()
+    check_db.commit()
     check_db.close()
     pg_engine.dispose()

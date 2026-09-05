@@ -26,7 +26,9 @@ from backend.app.recovery.eligibility import evaluate_eligibility, utc_now
 from backend.app.risk.gate import evaluate_risk
 from backend.app.policies.engine import evaluate_policy
 
-engine = create_engine("sqlite:///./test.db", connect_args={"check_same_thread": False})
+from sqlalchemy.pool import StaticPool
+
+engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -34,7 +36,6 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 def setup_db():
     Base.metadata.create_all(bind=engine)
     yield
-    Base.metadata.drop_all(bind=engine)
 
 
 def test_eligibility_customer_opt_out():
@@ -104,7 +105,7 @@ def test_eligibility_case_expired():
 
 def test_eligibility_max_retries_reached():
     db = TestingSessionLocal()
-    policy = MerchantPolicy(max_retries=2)
+    policy = MerchantPolicy(merchant_id=1, max_retries=2)
     db.add(policy)
     db.commit()
 

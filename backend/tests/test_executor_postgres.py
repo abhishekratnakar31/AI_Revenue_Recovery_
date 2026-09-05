@@ -30,8 +30,12 @@ PG_URL = os.getenv("PG_DATABASE_URL", settings.DATABASE_URL)
 
 
 def is_postgres_available() -> bool:
+    if "sqlite" in str(PG_URL).lower():
+        return False
     try:
         eng = create_engine(PG_URL, connect_args={"connect_timeout": 3})
+        if eng.dialect.name != "postgresql":
+            return False
         with eng.connect() as conn:
             return True
     except Exception:

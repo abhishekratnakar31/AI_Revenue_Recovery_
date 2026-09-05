@@ -24,12 +24,17 @@ class MockLLMProvider(LLMProvider):
         amount = case_context.get("amount", "0.00")
         currency = case_context.get("currency", "INR")
         action_name = action_context.get("action_type", "PAYMENT_LINK")
-        discount_pct = action_context.get("discount_pct", 0)
+        raw_discount = action_context.get("discount_pct", 0)
+        try:
+            discount_pct = float(raw_discount) if raw_discount is not None else 0.0
+        except (ValueError, TypeError):
+            discount_pct = 0.0
+        discount_str = f"{int(discount_pct)}" if discount_pct.is_integer() else f"{discount_pct}"
 
         if ch_upper == "SMS":
             headline = "Action Required: Payment Pending"
             if discount_pct > 0:
-                body = f"Hi {first_name}, your payment of {currency} {amount} failed. Complete now with a {discount_pct}% discount using your secure payment link."
+                body = f"Hi {first_name}, your payment of {currency} {amount} failed. Complete now with a {discount_str}% discount using your secure payment link."
             else:
                 body = f"Hi {first_name}, your payment of {currency} {amount} failed. Please complete your transaction using your secure link."
             cta_text = "Pay Now"
@@ -37,7 +42,7 @@ class MockLLMProvider(LLMProvider):
         elif ch_upper == "WHATSAPP":
             headline = "Notice: Payment Retried / Link Ready"
             if discount_pct > 0:
-                body = f"Hello {first_name},\n\nWe noticed your payment of {currency} {amount} was unsuccessful. We have applied a exclusive {discount_pct}% discount to help you complete your order smoothly."
+                body = f"Hello {first_name},\n\nWe noticed your payment of {currency} {amount} was unsuccessful. We have applied a exclusive {discount_str}% discount to help you complete your order smoothly."
             else:
                 body = f"Hello {first_name},\n\nWe noticed your recent payment attempt of {currency} {amount} could not be processed. Please click below to complete your payment securely."
             cta_text = "Complete Payment"
@@ -45,7 +50,7 @@ class MockLLMProvider(LLMProvider):
         else:  # EMAIL
             headline = f"Payment Update for Order #{case_context.get('order_id', 'N/A')}"
             if discount_pct > 0:
-                body = f"Dear {first_name},\n\nYour payment of {currency} {amount} for your order encountered a temporary issue. As a courtesy, we have applied a {discount_pct}% discount for immediate payment."
+                body = f"Dear {first_name},\n\nYour payment of {currency} {amount} for your order encountered a temporary issue. As a courtesy, we have applied a {discount_str}% discount for immediate payment."
             else:
                 body = f"Dear {first_name},\n\nYour payment attempt of {currency} {amount} was unsuccessful due to a processing issue with your bank. You can complete your order using our secure link."
             cta_text = "Pay Securely Now"

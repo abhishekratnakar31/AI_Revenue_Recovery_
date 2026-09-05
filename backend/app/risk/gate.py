@@ -68,6 +68,7 @@ def evaluate_risk(db: Session, case_id: int) -> RiskResult:
     if case.amount_at_risk >= approval_threshold:
         reason = f"High-value transaction (₹{case.amount_at_risk:,.2f}) exceeds manual approval threshold (₹{approval_threshold:,.2f})."
         _record_risk_decision(db, case, "REVIEW", reason)
+        _update_case_status(db, case, PaymentStatus.MANUAL_REVIEW.value, reason)
         return RiskResult(
             decision="REVIEW",
             risk_score=0.4,

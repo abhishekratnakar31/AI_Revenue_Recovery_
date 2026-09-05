@@ -37,6 +37,7 @@ class PaymentStatus(str, Enum):
     MAX_RETRIES_REACHED = "MAX_RETRIES_REACHED"
     EXPIRED = "EXPIRED"
     FAILED_PERMANENTLY = "FAILED_PERMANENTLY"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
 
 
 class InvalidStateTransitionError(ValueError):
@@ -51,7 +52,8 @@ ALLOWABLE_TRANSITIONS: Dict[PaymentStatus, Set[PaymentStatus]] = {
         PaymentStatus.PENDING_VERIFICATION,
         PaymentStatus.RECOVERY_ELIGIBLE,
         PaymentStatus.AUTO_RESOLVED,
-        PaymentStatus.RECOVERED
+        PaymentStatus.RECOVERED,
+        PaymentStatus.MANUAL_REVIEW
     },
     PaymentStatus.FAILED: {
         PaymentStatus.PENDING_VERIFICATION,
@@ -64,15 +66,18 @@ ALLOWABLE_TRANSITIONS: Dict[PaymentStatus, Set[PaymentStatus]] = {
         PaymentStatus.RECOVERY_ELIGIBLE,
         PaymentStatus.POLICY_BLOCKED,
         PaymentStatus.CUSTOMER_OPTED_OUT,
-        PaymentStatus.FAILED_PERMANENTLY
+        PaymentStatus.FAILED_PERMANENTLY,
+        PaymentStatus.MANUAL_REVIEW
     },
     PaymentStatus.RECOVERY_ELIGIBLE: {
         PaymentStatus.RECOVERY_ACTIVE,
+        PaymentStatus.RECOVERED,
         PaymentStatus.AUTO_RESOLVED,
         PaymentStatus.POLICY_BLOCKED,
         PaymentStatus.CUSTOMER_OPTED_OUT,
         PaymentStatus.EXPIRED,
-        PaymentStatus.MAX_RETRIES_REACHED
+        PaymentStatus.MAX_RETRIES_REACHED,
+        PaymentStatus.MANUAL_REVIEW
     },
     PaymentStatus.RECOVERY_ACTIVE: {
         PaymentStatus.RECOVERED,
@@ -80,7 +85,8 @@ ALLOWABLE_TRANSITIONS: Dict[PaymentStatus, Set[PaymentStatus]] = {
         PaymentStatus.MAX_RETRIES_REACHED,
         PaymentStatus.EXPIRED,
         PaymentStatus.FAILED_PERMANENTLY,
-        PaymentStatus.POLICY_BLOCKED
+        PaymentStatus.POLICY_BLOCKED,
+        PaymentStatus.MANUAL_REVIEW
     },
     # Terminal states (No outward transitions allowed)
     PaymentStatus.RECOVERED: set(),
@@ -91,6 +97,7 @@ ALLOWABLE_TRANSITIONS: Dict[PaymentStatus, Set[PaymentStatus]] = {
     PaymentStatus.MAX_RETRIES_REACHED: set(),
     PaymentStatus.EXPIRED: set(),
     PaymentStatus.FAILED_PERMANENTLY: set(),
+    PaymentStatus.MANUAL_REVIEW: set(),
 }
 
 
