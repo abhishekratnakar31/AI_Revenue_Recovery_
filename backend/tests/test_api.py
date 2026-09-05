@@ -269,11 +269,11 @@ def test_case_timeline_steps(client, db):
     step_types = [s["step_type"] for s in steps]
 
     assert "PAYMENT_ATTEMPT" in step_types
-    assert "ML_RISK" in step_types
-    assert "M8_AGENT_DECISION" in step_types
-    assert "M11_ROUTE_GUARDRAIL" in step_types
-    assert "M9_ACTION_EXECUTION" in step_types
-    assert "M12_FINANCIAL_OUTCOME" in step_types
+    assert "RECOVERY_ASSESSMENT" in step_types
+    assert "AI_DECISION_ENGINE" in step_types
+    assert "POLICY_GUARDRAIL" in step_types
+    assert "ACTION_EXECUTION" in step_types
+    assert "REVENUE_ATTRIBUTION" in step_types
 
 
 # --- 7. Merchant Policy API & Optimistic Concurrency ---

@@ -8,7 +8,15 @@ decisions and outcomes against expected preset definitions.
 import argparse
 import json
 import logging
-from typing import Dict, Any, List
+import os
+import sys
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+
+# Automatically ensure project root directory is on sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.app.core.database import SessionLocal
 from simulation.presets import PRESETS, get_preset, list_presets

@@ -43,7 +43,9 @@ from simulation.personas import PERSONA_PROFILES
 from simulation.scenarios import SCENARIO_PROFILES, generate_failed_webhook_payload, generate_captured_webhook_payload
 from simulation.runner import run_simulation_batch
 
-engine = create_engine("sqlite:///./test.db", connect_args={"check_same_thread": False})
+from sqlalchemy.pool import StaticPool
+
+engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -51,7 +53,6 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 def setup_db():
     Base.metadata.create_all(bind=engine)
     yield
-    Base.metadata.drop_all(bind=engine)
 
 
 def test_concurrent_webhook_idempotency_stress():

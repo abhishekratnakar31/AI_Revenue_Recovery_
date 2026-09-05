@@ -238,12 +238,12 @@ def get_case_timeline(
         )
         step_num += 1
 
-    # Step 2: ML_RISK
+    # Step 2: RECOVERY_ASSESSMENT
     if prediction:
         steps.append(
             TimelineStep(
                 step_number=step_num,
-                step_type="ML_RISK",
+                step_type="RECOVERY_ASSESSMENT",
                 timestamp=prediction.predicted_at.isoformat() if prediction.predicted_at else case.created_at.isoformat(),
                 title="ML Calibrated Recovery Assessment",
                 details={
@@ -256,14 +256,14 @@ def get_case_timeline(
         )
         step_num += 1
 
-    # Step 3: M8_AGENT_DECISION
+    # Step 3: AI_DECISION_ENGINE
     if agent_dec:
         steps.append(
             TimelineStep(
                 step_number=step_num,
-                step_type="M8_AGENT_DECISION",
+                step_type="AI_DECISION_ENGINE",
                 timestamp=agent_dec.created_at.isoformat() if agent_dec.created_at else case.created_at.isoformat(),
-                title="M8 Economic Value Decision Agent",
+                title="AI Recovery Strategy Engine",
                 details={
                     "selected_action": agent_dec.selected_action,
                     "diagnosis_summary": agent_dec.diagnosis_summary or "Route timeout analysis",
@@ -274,14 +274,14 @@ def get_case_timeline(
         )
         step_num += 1
 
-    # Step 4: M11_ROUTE_GUARDRAIL
+    # Step 4: POLICY_GUARDRAIL
     for pol in policy_decs:
         steps.append(
             TimelineStep(
                 step_number=step_num,
-                step_type="M11_ROUTE_GUARDRAIL",
+                step_type="POLICY_GUARDRAIL",
                 timestamp=pol.created_at.isoformat() if pol.created_at else case.created_at.isoformat(),
-                title="M11 Deterministic Policy & Route Guardrail",
+                title="Policy & Route Safety Check",
                 details={
                     "action_evaluated": pol.action_type,
                     "decision": pol.decision,
@@ -292,14 +292,14 @@ def get_case_timeline(
         )
         step_num += 1
 
-    # Step 5: M9_ACTION_EXECUTION
+    # Step 5: ACTION_EXECUTION
     for act in actions:
         steps.append(
             TimelineStep(
                 step_number=step_num,
-                step_type="M9_ACTION_EXECUTION",
+                step_type="ACTION_EXECUTION",
                 timestamp=act.executed_at.isoformat() if act.executed_at else case.created_at.isoformat(),
-                title=f"M9 Recovery Execution: {act.action_type}",
+                title=f"Recovery Intervention Executed: {act.action_type}",
                 details={
                     "action_type": act.action_type,
                     "status": act.status,
@@ -310,17 +310,18 @@ def get_case_timeline(
         )
         step_num += 1
 
-    # Step 6: M12_FINANCIAL_OUTCOME
+    # Step 6: REVENUE_ATTRIBUTION
     if outcome:
         net_amt = float(outcome.net_recovered or 0.0)
+        is_rec = bool(outcome.is_recovered or outcome.payment_success or case.status == "RECOVERED")
         steps.append(
             TimelineStep(
                 step_number=step_num,
-                step_type="M12_FINANCIAL_OUTCOME",
+                step_type="REVENUE_ATTRIBUTION",
                 timestamp=outcome.recovery_timestamp.isoformat() if outcome.recovery_timestamp else case.created_at.isoformat(),
-                title="M12 Financial Outcome & Attribution",
+                title="Financial Outcome & Attribution Summary",
                 details={
-                    "is_recovered": outcome.is_recovered,
+                    "is_recovered": is_rec,
                     "net_recovered_revenue": f"{net_amt:.2f}",
                     "cash_collected": f"{float(outcome.gross_recovered or 0.0):.2f}",
                     "refund_deductions": f"{float(outcome.refund_deductions or 0.0):.2f}",

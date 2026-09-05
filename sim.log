@@ -1,0 +1,36 @@
+Upserting customer...
+Ingesting Failed Webhook...
+Assigning to experiment...
+Evaluating eligibility...
+==================================================
+🎲 RecoverAI Simulation Completed Successfully
+  - Run Tag: s42
+  - Total Cases: 1
+  - Total At Risk: ₹8,288.52
+  - Total Recovered: ₹0.00
+  - Net Recovery Rate: 0.0%
+  - Actions Taken: {'NO_ACTION': 1}
+==================================================
+================================================
+🎲 Rec{'NO_ACTION': 1}
+==================================================
+Cases: 1
+  - Total At Risk: ₹8,288.52
+  - Total Recovered: ₹0.00
+  - Net Recovery Rate: 0.0%
+  - Actions Taken: {'NO_ACTION': 1}
+==================================================
+..
+==================================================
+🎲 RecoverAI Simulation Completed Successfully
+  - Run Tag: s42
+  - Total Cases: 1
+  - Total At Risk: ₹8,288.52
+  - Total Recovered: ₹0.00
+  - Net Recovery Rate: 0.0%
+  - Actions Taken: {'NO_ACTION': 1}
+==================================================
+: ₹0.00
+  - Net Recovery Rate: 0.0%
+  - Actions Taken: {'NO_ACTION': 1}
+==================================================

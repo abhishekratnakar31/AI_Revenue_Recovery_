@@ -13,10 +13,18 @@ from simulation.preset_runner import run_preset, run_all_presets
 
 router = APIRouter(prefix="/presets", tags=["Presets"])
 
+# Alias mapping for UI card keys to backend preset keys
+KEY_ALIASES = {
+    "CONFIRMED_GATEWAY_OUTAGE": "CONFIRMED_HDFC_DEGRADATION",
+    "BUDGET_CUSTOMER_INCENTIVE": "BUDGET_DISCOUNT_RECOVERY",
+}
+
 
 class PresetRunRequest(BaseModel):
     preset_name: Optional[str] = None
+    preset_key: Optional[str] = None
     seed: int = 42
+    random_seed: Optional[int] = None
 
 
 @router.get("", response_model=List[Dict[str, Any]])
@@ -28,24 +36,49 @@ def get_presets_list():
 @router.post("/run")
 def run_preset_endpoint(payload: PresetRunRequest, db: Session = Depends(get_db)):
     """
-    Executes a single preset (if `preset_name` is provided) or all 7 presets,
+    Executes a single preset (if `preset_name` or `preset_key` is provided) or all 7 presets,
     returning execution metrics and expected vs actual validation.
     """
-    if payload.preset_name:
-        if payload.preset_name not in PRESETS:
+    name = payload.preset_name or payload.preset_key
+    seed = payload.random_seed if payload.random_seed is not None else payload.seed
+
+    if name:
+        target_key = KEY_ALIASES.get(name, name)
+        if target_key not in PRESETS:
             raise HTTPException(
                 status_code=404,
-                detail=f"Preset '{payload.preset_name}' not found. Available: {list(PRESETS.keys())}"
+                detail=f"Preset '{name}' not found. Available: {list(PRESETS.keys())}"
             )
-        result = run_preset(payload.preset_name, seed=payload.seed, db_session=db)
-        return {"status": "completed", "preset": payload.preset_name, "result": result}
+        result = run_preset(target_key, seed=seed, db_session=db)
+        return {
+            "status": "completed",
+            "preset": target_key,
+            "result": result,
+            "preset_validation": result.get("preset_validation"),
+        }
     else:
-        results = run_all_presets(seed=payload.seed, db_session=db)
+        results = run_all_presets(seed=seed, db_session=db)
         passed = sum(1 for r in results if r.get("preset_validation", {}).get("passed"))
         return {
             "status": "completed",
             "total_presets": len(results),
             "passed": passed,
             "failed": len(results) - passed,
-            "results": results
+            "results": results,
         }
+
+
+@router.post("/run_all")
+def run_all_presets_endpoint(payload: PresetRunRequest, db: Session = Depends(get_db)):
+    """Executes all 7 presets."""
+    seed = payload.random_seed if payload.random_seed is not None else payload.seed
+    results = run_all_presets(seed=seed, db_session=db)
+    passed = sum(1 for r in results if r.get("preset_validation", {}).get("passed"))
+    return {
+        "status": "completed",
+        "total_presets": len(results),
+        "passed": passed,
+        "failed": len(results) - passed,
+        "results": results,
+    }
+

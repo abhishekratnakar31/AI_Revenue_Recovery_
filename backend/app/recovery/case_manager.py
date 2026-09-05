@@ -281,6 +281,7 @@ def process_captured_payment_event(db: Session, payload: Dict[str, Any]) -> Opti
                 case_id=case.id,
                 intervention="NATURAL_CAPTURE" if attribution == "NATURAL_RECOVERY" else "RECOVERY_ACTION",
                 payment_success=True,
+                is_recovered=True,
                 gross_recovered=amount,
                 net_recovered=amount,
                 attribution_status=attribution,
@@ -289,6 +290,7 @@ def process_captured_payment_event(db: Session, payload: Dict[str, Any]) -> Opti
             db.add(outcome)
         else:
             outcome.payment_success = True
+            outcome.is_recovered = True
             outcome.gross_recovered = amount
             outcome.net_recovered = amount - outcome.refund_amount
             outcome.attribution_status = attribution

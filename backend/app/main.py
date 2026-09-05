@@ -10,7 +10,8 @@ Responsibilities:
 """
 
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException, Query, status
+from pydantic import BaseModel
+from fastapi import FastAPI, Depends, HTTPException, Query, Body, status
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -84,17 +85,35 @@ def health_check(db: Session = Depends(get_db)):
     }
 
 
+class SimulationRunRequest(BaseModel):
+    num_cases: Optional[int] = 20
+    random_seed: Optional[int] = 42
+
+
+from fastapi.concurrency import run_in_threadpool
+from backend.app.core.database import get_db, engine, Base, SessionLocal
+
 @app.post("/simulation/run", tags=["Simulation & Testing"])
-def run_simulation(
-    num_cases: int = Query(20, ge=1, le=500, description="Number of synthetic cases to generate"),
-    random_seed: int = Query(42, description="Random seed for reproducible generation"),
-    db: Session = Depends(get_db)
+async def run_simulation(
+    req: Optional[SimulationRunRequest] = Body(None),
+    num_cases: Optional[int] = Query(None),
+    random_seed: Optional[int] = Query(None),
 ):
     """
     Triggers a synthetic batch simulation run generating payment failures, evaluating risk/policies,
-    and recording recovery outcomes.
+    and recording recovery outcomes asynchronously offloaded to a threadpool.
     """
-    summary = run_simulation_batch(db, num_cases=num_cases, random_seed=random_seed, auto_process=True)
+    cases = (req.num_cases if req and req.num_cases is not None else (num_cases or 20))
+    seed = (req.random_seed if req and req.random_seed is not None else (random_seed or 42))
+
+    def _worker():
+        session = SessionLocal()
+        try:
+            return run_simulation_batch(session, num_cases=cases, random_seed=seed, auto_process=True)
+        finally:
+            session.close()
+
+    summary = await run_in_threadpool(_worker)
     return summary
 
 
